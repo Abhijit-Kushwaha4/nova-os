@@ -1,0 +1,57 @@
+/* Body & font */
+body {
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  line-height: 1.5;
+  padding: 20px;
+}
+
+/* Chat container */
+.chat-container {
+  max-width: 650px;
+  margin: auto;
+  border: 1px solid #ccc;
+  border-radius: 10px;
+  padding: 10px;
+  min-height: 300px;
+  overflow-y: auto;
+  background: var(--chat-bg, #f9f9f9);
+}
+
+/* Messages */
+.chat-message {
+  padding: 8px 12px;
+  border-radius: 8px;
+  margin-bottom: 8px;
+  max-width: 80%;
+}
+
+/* User vs AI */
+.chat-message.user {
+  background-color: #cce5ff;
+  color: #004085;
+  margin-left: auto;
+}
+
+.chat-message.assistant {
+  background-color: #e2e3e5;
+  color: #383d41;
+  margin-right: auto;
+}
+
+/* Inputs and buttons */
+input, button, select {
+  padding: 8px 12px;
+  font-size: 14px;
+  margin-top: 6px;
+  border-radius: 6px;
+  border: 1px solid #ccc;
+}
+
+button {
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+button:hover {
+  background-color: #ddd;
+}
