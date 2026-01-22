@@ -1,0 +1,20 @@
+body[data-theme="light"] {
+  background: #ffffff;
+  color: #000000;
+}
+
+body[data-theme="dark"] {
+  background: #121212;
+  color: #eaeaea;
+}
+
+body[data-theme="dark"] input,
+body[data-theme="dark"] button {
+  background: #1e1e1e;
+  color: #ffffff;
+  border: 1px solid #444;
+}
+
+body[data-theme="dark"] div {
+  background-color: #121212;
+}
