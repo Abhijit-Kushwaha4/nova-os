@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { AppProps } from '@/types/os';
-import { useOSStore } from '@/stores/osStore';
+import { db, fileOperations, FileItem } from '@/lib/db';
+import { useLiveQuery } from 'dexie-react-hooks';
 
 interface CommandOutput {
   type: 'input' | 'output' | 'error';
@@ -8,29 +9,27 @@ interface CommandOutput {
 }
 
 export const Terminal: React.FC<AppProps> = () => {
-  const { fileSystem, getChildren, createFolder, createFile, deleteItem } = useOSStore();
   const [history, setHistory] = useState<CommandOutput[]>([
     { type: 'output', content: 'WebOS Terminal v1.0.0' },
     { type: 'output', content: 'Type "help" for available commands.\n' },
   ]);
   const [currentInput, setCurrentInput] = useState('');
-  const [currentPath, setCurrentPath] = useState('root');
+  const [currentPath, setCurrentPath] = useState<number | null>(null);
   const [commandHistory, setCommandHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const inputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const currentFolder = fileSystem.find(f => f.id === currentPath);
-  
+  const currentFiles = useLiveQuery(() => fileOperations.getChildren(currentPath), [currentPath]);
+  const pathBreadcrumb = useLiveQuery(
+    () => currentPath ? fileOperations.getPath(currentPath) : Promise.resolve([]),
+    [currentPath]
+  );
+
   const getPathString = useCallback(() => {
-    const parts: string[] = [];
-    let current = fileSystem.find(f => f.id === currentPath);
-    while (current) {
-      parts.unshift(current.name);
-      current = fileSystem.find(f => f.id === current?.parentId);
-    }
-    return '/' + parts.join('/');
-  }, [currentPath, fileSystem]);
+    if (!pathBreadcrumb || pathBreadcrumb.length === 0) return '/home';
+    return '/home/' + pathBreadcrumb.map(p => p.name).join('/');
+  }, [pathBreadcrumb]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight);
@@ -40,7 +39,7 @@ export const Terminal: React.FC<AppProps> = () => {
     setHistory(prev => [...prev, { type, content }]);
   };
 
-  const executeCommand = (input: string) => {
+  const executeCommand = async (input: string) => {
     const trimmed = input.trim();
     if (!trimmed) return;
 
@@ -70,14 +69,10 @@ export const Terminal: React.FC<AppProps> = () => {
         break;
 
       case 'ls':
-        const items = getChildren(currentPath);
-        if (items.length === 0) {
+        if (!currentFiles || currentFiles.length === 0) {
           addOutput('(empty directory)');
         } else {
-          const output = items.map(item => 
-            item.type === 'folder' ? `\x1b[34m${item.name}/\x1b[0m` : item.name
-          ).join('  ');
-          addOutput(items.map(item => 
+          addOutput(currentFiles.map(item => 
             item.type === 'folder' ? `📁 ${item.name}/` : `📄 ${item.name}`
           ).join('\n'));
         }
@@ -85,17 +80,16 @@ export const Terminal: React.FC<AppProps> = () => {
 
       case 'cd':
         if (!arg || arg === '~') {
-          setCurrentPath('root');
+          setCurrentPath(null);
         } else if (arg === '..') {
-          if (currentFolder?.parentId) {
-            setCurrentPath(currentFolder.parentId);
+          if (pathBreadcrumb && pathBreadcrumb.length > 0) {
+            const parent = pathBreadcrumb[pathBreadcrumb.length - 1];
+            setCurrentPath(parent.parentId);
           }
         } else {
-          const target = getChildren(currentPath).find(
-            i => i.type === 'folder' && i.name.toLowerCase() === arg.toLowerCase()
-          );
+          const target = currentFiles?.find(i => i.type === 'folder' && i.name.toLowerCase() === arg.toLowerCase());
           if (target) {
-            setCurrentPath(target.id);
+            setCurrentPath(target.id!);
           } else {
             addOutput(`cd: no such directory: ${arg}`, 'error');
           }
@@ -107,48 +101,41 @@ export const Terminal: React.FC<AppProps> = () => {
         break;
 
       case 'mkdir':
-        if (!arg) {
-          addOutput('mkdir: missing operand', 'error');
-        } else {
-          createFolder(arg, currentPath);
+        if (!arg) addOutput('mkdir: missing operand', 'error');
+        else {
+          await fileOperations.createFolder(arg, currentPath);
           addOutput(`Created folder: ${arg}`);
         }
         break;
 
       case 'touch':
-        if (!arg) {
-          addOutput('touch: missing operand', 'error');
-        } else {
-          createFile(arg, currentPath);
+        if (!arg) addOutput('touch: missing operand', 'error');
+        else {
+          await fileOperations.createFile(arg, currentPath);
           addOutput(`Created file: ${arg}`);
         }
         break;
 
       case 'rm':
-        if (!arg) {
-          addOutput('rm: missing operand', 'error');
-        } else {
-          const target = getChildren(currentPath).find(i => i.name.toLowerCase() === arg.toLowerCase());
+        if (!arg) addOutput('rm: missing operand', 'error');
+        else {
+          const target = currentFiles?.find(i => i.name.toLowerCase() === arg.toLowerCase());
           if (target) {
-            deleteItem(target.id);
+            await fileOperations.deleteFile(target.id!);
             addOutput(`Removed: ${arg}`);
           } else {
-            addOutput(`rm: cannot remove '${arg}': No such file or directory`, 'error');
+            addOutput(`rm: cannot remove '${arg}': No such file`, 'error');
           }
         }
         break;
 
       case 'cat':
-        if (!arg) {
-          addOutput('cat: missing operand', 'error');
-        } else {
-          const file = getChildren(currentPath).find(
-            i => i.type === 'file' && i.name.toLowerCase() === arg.toLowerCase()
-          );
-          if (file && file.content !== undefined) {
-            addOutput(file.content || '(empty file)');
-          } else if (file) {
-            addOutput('(empty file)');
+        if (!arg) addOutput('cat: missing operand', 'error');
+        else {
+          const file = currentFiles?.find(i => i.type === 'file' && i.name.toLowerCase() === arg.toLowerCase());
+          if (file) {
+            const fullFile = await fileOperations.getFile(file.id!);
+            addOutput(fullFile?.content?.toString() || '(empty file)');
           } else {
             addOutput(`cat: ${arg}: No such file`, 'error');
           }
@@ -173,25 +160,22 @@ export const Terminal: React.FC<AppProps> = () => {
 
       case 'neofetch':
         addOutput(`
-        ╭─────────────────────╮
-        │      WebOS          │
-        ╰─────────────────────╯
-        
-        OS: WebOS 1.0.0
-        Host: Browser
-        Kernel: JavaScript
-        Shell: WebOS Terminal
-        Resolution: ${window.innerWidth}x${window.innerHeight}
-        DE: WebOS Desktop
-        Theme: Cosmic Dark
-        Terminal: WebOS Terminal
-        CPU: ${navigator.hardwareConcurrency || 'Unknown'} cores
-        Memory: ${(navigator as any).deviceMemory || 'Unknown'} GB
-        `);
+       ╭─────────────────────╮
+       │       WebOS         │
+       ╰─────────────────────╯
+       
+       OS: WebOS 1.0.0
+       Host: Browser
+       Kernel: JavaScript
+       Shell: WebOS Terminal
+       Resolution: ${window.innerWidth}x${window.innerHeight}
+       DE: WebOS Desktop
+       Theme: Cosmic Dark
+       `);
         break;
 
       default:
-        addOutput(`${cmd}: command not found. Type 'help' for available commands.`, 'error');
+        addOutput(`${cmd}: command not found`, 'error');
     }
   };
 
@@ -201,53 +185,32 @@ export const Terminal: React.FC<AppProps> = () => {
       setCurrentInput('');
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      if (commandHistory.length > 0) {
-        const newIndex = historyIndex < commandHistory.length - 1 ? historyIndex + 1 : historyIndex;
+      if (commandHistory.length > 0 && historyIndex < commandHistory.length - 1) {
+        const newIndex = historyIndex + 1;
         setHistoryIndex(newIndex);
-        setCurrentInput(commandHistory[commandHistory.length - 1 - newIndex] || '');
+        setCurrentInput(commandHistory[commandHistory.length - 1 - newIndex]);
       }
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
       if (historyIndex > 0) {
         const newIndex = historyIndex - 1;
         setHistoryIndex(newIndex);
-        setCurrentInput(commandHistory[commandHistory.length - 1 - newIndex] || '');
+        setCurrentInput(commandHistory[commandHistory.length - 1 - newIndex]);
       } else {
         setHistoryIndex(-1);
         setCurrentInput('');
-      }
-    } else if (e.key === 'Tab') {
-      e.preventDefault();
-      // Simple autocomplete
-      const items = getChildren(currentPath);
-      const matches = items.filter(i => i.name.toLowerCase().startsWith(currentInput.toLowerCase()));
-      if (matches.length === 1) {
-        const words = currentInput.split(' ');
-        words[words.length - 1] = matches[0].name;
-        setCurrentInput(words.join(' '));
       }
     }
   };
 
   return (
-    <div 
-      className="h-full bg-zinc-900 text-green-400 font-mono text-sm p-3 overflow-hidden flex flex-col"
-      onClick={() => inputRef.current?.focus()}
-    >
+    <div className="h-full bg-zinc-900 text-green-400 font-mono text-sm p-3 flex flex-col" onClick={() => inputRef.current?.focus()}>
       <div ref={scrollRef} className="flex-1 overflow-y-auto os-scrollbar">
         {history.map((entry, i) => (
-          <div 
-            key={i} 
-            className={`whitespace-pre-wrap ${
-              entry.type === 'error' ? 'text-red-400' : 
-              entry.type === 'input' ? 'text-blue-400' : 'text-green-400'
-            }`}
-          >
+          <div key={i} className={`whitespace-pre-wrap ${entry.type === 'error' ? 'text-red-400' : entry.type === 'input' ? 'text-blue-400' : 'text-green-400'}`}>
             {entry.content}
           </div>
         ))}
-        
-        {/* Current Input Line */}
         <div className="flex items-center gap-2">
           <span className="text-blue-400 shrink-0">{getPathString()} $</span>
           <input
@@ -256,9 +219,8 @@ export const Terminal: React.FC<AppProps> = () => {
             value={currentInput}
             onChange={(e) => setCurrentInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            className="flex-1 bg-transparent outline-none text-green-400 caret-green-400"
+            className="flex-1 bg-transparent outline-none text-green-400"
             autoFocus
-            spellCheck={false}
           />
         </div>
       </div>

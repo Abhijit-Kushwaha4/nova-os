@@ -11,6 +11,7 @@ export interface WindowState {
   isMaximized: boolean;
   zIndex: number;
   isClosing?: boolean;
+  props?: Record<string, any>;
 }
 
 export interface DesktopIcon {
@@ -29,41 +30,11 @@ export interface AppConfig {
   component: React.ComponentType<AppProps>;
   defaultWidth?: number;
   defaultHeight?: number;
-  minWidth?: number;
-  minHeight?: number;
 }
 
 export interface AppProps {
   windowId: string;
-}
-
-export interface FileSystemItem {
-  id: string;
-  name: string;
-  type: 'file' | 'folder';
-  parentId: string | null;
-  content?: string;
-  createdAt: Date;
-  modifiedAt: Date;
-  size?: number;
-  mimeType?: string;
-}
-
-export interface Note {
-  id: string;
-  title: string;
-  content: string;
-  isPinned: boolean;
-  createdAt: Date;
-  modifiedAt: Date;
-}
-
-export interface UserSettings {
-  wallpaper: string;
-  theme: 'dark' | 'light';
-  accentColor: string;
-  username: string;
-  iconSize: 'small' | 'medium' | 'large';
+  [key: string]: any;
 }
 
 export interface Notification {
@@ -72,5 +43,4 @@ export interface Notification {
   message: string;
   type: 'info' | 'success' | 'warning' | 'error';
   timestamp: Date;
-  read: boolean;
 }

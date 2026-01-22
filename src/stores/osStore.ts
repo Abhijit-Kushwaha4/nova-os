@@ -1,6 +1,44 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { WindowState, DesktopIcon, FileSystemItem, Note, UserSettings, Notification } from '@/types/os';
+
+export interface WindowState {
+  id: string;
+  appId: string;
+  title: string;
+  icon: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  isMinimized: boolean;
+  isMaximized: boolean;
+  zIndex: number;
+  isClosing?: boolean;
+  props?: Record<string, any>;
+}
+
+export interface DesktopIcon {
+  id: string;
+  appId: string;
+  name: string;
+  icon: string;
+  x: number;
+  y: number;
+}
+
+export interface ClipboardItem {
+  type: 'cut' | 'copy';
+  fileIds: number[];
+}
+
+export interface Notification {
+  id: string;
+  title: string;
+  message: string;
+  type: 'info' | 'success' | 'warning' | 'error';
+  timestamp: Date;
+  appId?: string;
+}
 
 interface OSState {
   // Windows
@@ -12,14 +50,8 @@ interface OSState {
   desktopIcons: DesktopIcon[];
   selectedIconIds: string[];
   
-  // File System
-  fileSystem: FileSystemItem[];
-  
-  // Notes
-  notes: Note[];
-  
-  // Settings
-  settings: UserSettings;
+  // Clipboard
+  clipboard: ClipboardItem | null;
   
   // Notifications
   notifications: Notification[];
@@ -27,10 +59,24 @@ interface OSState {
   // UI State
   isStartMenuOpen: boolean;
   isBooting: boolean;
-  contextMenu: { x: number; y: number; type: 'desktop' | 'icon' | 'file'; targetId?: string } | null;
+  contextMenu: { x: number; y: number; type: string; data?: any } | null;
+  
+  // Settings
+  settings: {
+    wallpaper: string;
+    theme: 'dark' | 'light';
+    accentColor: string;
+    username: string;
+    iconSize: 'small' | 'medium' | 'large';
+    animationsEnabled: boolean;
+    transparency: boolean;
+  };
+  
+  // Performance tracking
+  startTime: number;
   
   // Window Actions
-  openWindow: (appId: string, title: string, icon: string, width?: number, height?: number) => void;
+  openWindow: (appId: string, title: string, icon: string, width?: number, height?: number, props?: Record<string, any>) => string;
   closeWindow: (id: string) => void;
   minimizeWindow: (id: string) => void;
   maximizeWindow: (id: string) => void;
@@ -38,62 +84,57 @@ interface OSState {
   focusWindow: (id: string) => void;
   updateWindowPosition: (id: string, x: number, y: number) => void;
   updateWindowSize: (id: string, width: number, height: number) => void;
+  updateWindowTitle: (id: string, title: string) => void;
   
   // Desktop Actions
   selectIcon: (id: string, isMultiSelect?: boolean) => void;
   clearSelection: () => void;
   updateIconPosition: (id: string, x: number, y: number) => void;
   
-  // File System Actions
-  createFile: (name: string, parentId: string | null, content?: string) => FileSystemItem;
-  createFolder: (name: string, parentId: string | null) => FileSystemItem;
-  deleteItem: (id: string) => void;
-  renameItem: (id: string, newName: string) => void;
-  updateFileContent: (id: string, content: string) => void;
-  getChildren: (parentId: string | null) => FileSystemItem[];
+  // Clipboard
+  setClipboard: (item: ClipboardItem | null) => void;
   
-  // Notes Actions
-  createNote: () => Note;
-  updateNote: (id: string, updates: Partial<Note>) => void;
-  deleteNote: (id: string) => void;
-  togglePinNote: (id: string) => void;
-  
-  // Settings Actions
-  updateSettings: (settings: Partial<UserSettings>) => void;
-  
-  // Notification Actions
-  addNotification: (notification: Omit<Notification, 'id' | 'timestamp' | 'read'>) => void;
+  // Notifications
+  addNotification: (notification: Omit<Notification, 'id' | 'timestamp'>) => void;
   dismissNotification: (id: string) => void;
+  clearNotifications: () => void;
+  
+  // Settings
+  updateSettings: (settings: Partial<OSState['settings']>) => void;
   
   // UI Actions
   setStartMenuOpen: (open: boolean) => void;
   setContextMenu: (menu: OSState['contextMenu']) => void;
   finishBooting: () => void;
+  
+  // Getters
+  getUptime: () => number;
+  getRunningApps: () => { appId: string; count: number }[];
 }
 
 const defaultDesktopIcons: DesktopIcon[] = [
   { id: 'icon-1', appId: 'file-explorer', name: 'Files', icon: 'folder', x: 20, y: 20 },
   { id: 'icon-2', appId: 'terminal', name: 'Terminal', icon: 'terminal', x: 20, y: 120 },
-  { id: 'icon-3', appId: 'text-editor', name: 'Editor', icon: 'file-text', x: 20, y: 220 },
+  { id: 'icon-3', appId: 'text-editor', name: 'Code', icon: 'file-code', x: 20, y: 220 },
   { id: 'icon-4', appId: 'calculator', name: 'Calculator', icon: 'calculator', x: 20, y: 320 },
   { id: 'icon-5', appId: 'notes', name: 'Notes', icon: 'sticky-note', x: 20, y: 420 },
-  { id: 'icon-6', appId: 'settings', name: 'Settings', icon: 'settings', x: 20, y: 520 },
+  { id: 'icon-6', appId: 'browser', name: 'Browser', icon: 'globe', x: 120, y: 20 },
+  { id: 'icon-7', appId: 'calendar', name: 'Calendar', icon: 'calendar', x: 120, y: 120 },
+  { id: 'icon-8', appId: 'settings', name: 'Settings', icon: 'settings', x: 120, y: 220 },
+  { id: 'icon-9', appId: 'media-player', name: 'Media', icon: 'music', x: 120, y: 320 },
+  { id: 'icon-10', appId: 'paint', name: 'Paint', icon: 'palette', x: 120, y: 420 },
+  { id: 'icon-11', appId: 'weather', name: 'Weather', icon: 'cloud-sun', x: 220, y: 20 },
+  { id: 'icon-12', appId: 'task-manager', name: 'Task Manager', icon: 'activity', x: 220, y: 120 },
 ];
 
-const defaultFileSystem: FileSystemItem[] = [
-  { id: 'root', name: 'Home', type: 'folder', parentId: null, createdAt: new Date(), modifiedAt: new Date() },
-  { id: 'documents', name: 'Documents', type: 'folder', parentId: 'root', createdAt: new Date(), modifiedAt: new Date() },
-  { id: 'downloads', name: 'Downloads', type: 'folder', parentId: 'root', createdAt: new Date(), modifiedAt: new Date() },
-  { id: 'pictures', name: 'Pictures', type: 'folder', parentId: 'root', createdAt: new Date(), modifiedAt: new Date() },
-  { id: 'welcome', name: 'Welcome.txt', type: 'file', parentId: 'documents', content: 'Welcome to WebOS!\n\nThis is your personal operating system running in the browser.\n\nExplore the apps, create files, and enjoy!', createdAt: new Date(), modifiedAt: new Date(), size: 120 },
-];
-
-const defaultSettings: UserSettings = {
+const defaultSettings = {
   wallpaper: 'cosmic',
-  theme: 'dark',
+  theme: 'dark' as const,
   accentColor: '#3b82f6',
   username: 'User',
-  iconSize: 'medium',
+  iconSize: 'medium' as const,
+  animationsEnabled: true,
+  transparency: true,
 };
 
 export const useOSStore = create<OSState>()(
@@ -104,32 +145,19 @@ export const useOSStore = create<OSState>()(
       nextZIndex: 1,
       desktopIcons: defaultDesktopIcons,
       selectedIconIds: [],
-      fileSystem: defaultFileSystem,
-      notes: [],
-      settings: defaultSettings,
+      clipboard: null,
       notifications: [],
       isStartMenuOpen: false,
       isBooting: true,
       contextMenu: null,
+      settings: defaultSettings,
+      startTime: Date.now(),
 
-      openWindow: (appId, title, icon, width = 800, height = 600) => {
-        const state = get();
-        const existingWindow = state.windows.find(w => w.appId === appId && !w.isMinimized);
-        
-        if (existingWindow) {
-          get().focusWindow(existingWindow.id);
-          return;
-        }
-
-        const minimizedWindow = state.windows.find(w => w.appId === appId && w.isMinimized);
-        if (minimizedWindow) {
-          get().restoreWindow(minimizedWindow.id);
-          return;
-        }
-
-        const id = `window-${Date.now()}`;
-        const centerX = Math.max(50, (window.innerWidth - width) / 2 + Math.random() * 50);
-        const centerY = Math.max(50, (window.innerHeight - height) / 2 + Math.random() * 50);
+      openWindow: (appId, title, icon, width = 900, height = 600, props = {}) => {
+        const id = `window-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        const offset = get().windows.length * 30;
+        const centerX = Math.max(50, (window.innerWidth - width) / 2 + offset);
+        const centerY = Math.max(50, (window.innerHeight - height) / 2 + offset);
 
         set((state) => ({
           windows: [...state.windows, {
@@ -137,18 +165,21 @@ export const useOSStore = create<OSState>()(
             appId,
             title,
             icon,
-            x: centerX,
-            y: centerY,
+            x: Math.min(centerX, window.innerWidth - 200),
+            y: Math.min(centerY, window.innerHeight - 200),
             width,
             height,
             isMinimized: false,
             isMaximized: false,
             zIndex: state.nextZIndex,
+            props,
           }],
           activeWindowId: id,
           nextZIndex: state.nextZIndex + 1,
           isStartMenuOpen: false,
         }));
+        
+        return id;
       },
 
       closeWindow: (id) => {
@@ -162,7 +193,7 @@ export const useOSStore = create<OSState>()(
           set((state) => ({
             windows: state.windows.filter(w => w.id !== id),
             activeWindowId: state.activeWindowId === id 
-              ? state.windows.filter(w => w.id !== id)[0]?.id || null 
+              ? state.windows.filter(w => w.id !== id && !w.isMinimized)[0]?.id || null 
               : state.activeWindowId,
           }));
         }, 200);
@@ -173,20 +204,21 @@ export const useOSStore = create<OSState>()(
           windows: state.windows.map(w =>
             w.id === id ? { ...w, isMinimized: true } : w
           ),
-          activeWindowId: state.activeWindowId === id ? null : state.activeWindowId,
+          activeWindowId: state.activeWindowId === id 
+            ? state.windows.filter(w => w.id !== id && !w.isMinimized)[0]?.id || null 
+            : state.activeWindowId,
         }));
       },
 
       maximizeWindow: (id) => {
         set((state) => ({
           windows: state.windows.map(w =>
-            w.id === id ? { ...w, isMaximized: true, x: 0, y: 0 } : w
+            w.id === id ? { ...w, isMaximized: true } : w
           ),
         }));
       },
 
       restoreWindow: (id) => {
-        const state = get();
         set((state) => ({
           windows: state.windows.map(w =>
             w.id === id ? { ...w, isMinimized: false, isMaximized: false, zIndex: state.nextZIndex } : w
@@ -199,7 +231,7 @@ export const useOSStore = create<OSState>()(
       focusWindow: (id) => {
         set((state) => ({
           windows: state.windows.map(w =>
-            w.id === id ? { ...w, zIndex: state.nextZIndex } : w
+            w.id === id ? { ...w, zIndex: state.nextZIndex, isMinimized: false } : w
           ),
           activeWindowId: id,
           nextZIndex: state.nextZIndex + 1,
@@ -218,6 +250,14 @@ export const useOSStore = create<OSState>()(
         set((state) => ({
           windows: state.windows.map(w =>
             w.id === id ? { ...w, width, height } : w
+          ),
+        }));
+      },
+
+      updateWindowTitle: (id, title) => {
+        set((state) => ({
+          windows: state.windows.map(w =>
+            w.id === id ? { ...w, title } : w
           ),
         }));
       },
@@ -244,108 +284,34 @@ export const useOSStore = create<OSState>()(
         }));
       },
 
-      createFile: (name, parentId, content = '') => {
-        const newFile: FileSystemItem = {
-          id: `file-${Date.now()}`,
-          name,
-          type: 'file',
-          parentId,
-          content,
-          createdAt: new Date(),
-          modifiedAt: new Date(),
-          size: content.length,
+      setClipboard: (item) => {
+        set({ clipboard: item });
+      },
+
+      addNotification: (notification) => {
+        const newNotification: Notification = {
+          ...notification,
+          id: `notif-${Date.now()}`,
+          timestamp: new Date(),
         };
         set((state) => ({
-          fileSystem: [...state.fileSystem, newFile],
+          notifications: [newNotification, ...state.notifications].slice(0, 50),
         }));
-        return newFile;
+        
+        // Auto-dismiss after 5 seconds
+        setTimeout(() => {
+          get().dismissNotification(newNotification.id);
+        }, 5000);
       },
 
-      createFolder: (name, parentId) => {
-        const newFolder: FileSystemItem = {
-          id: `folder-${Date.now()}`,
-          name,
-          type: 'folder',
-          parentId,
-          createdAt: new Date(),
-          modifiedAt: new Date(),
-        };
+      dismissNotification: (id) => {
         set((state) => ({
-          fileSystem: [...state.fileSystem, newFolder],
-        }));
-        return newFolder;
-      },
-
-      deleteItem: (id) => {
-        const deleteRecursive = (itemId: string, items: FileSystemItem[]): FileSystemItem[] => {
-          const children = items.filter(i => i.parentId === itemId);
-          let result = items.filter(i => i.id !== itemId);
-          children.forEach(child => {
-            result = deleteRecursive(child.id, result);
-          });
-          return result;
-        };
-
-        set((state) => ({
-          fileSystem: deleteRecursive(id, state.fileSystem),
+          notifications: state.notifications.filter(n => n.id !== id),
         }));
       },
 
-      renameItem: (id, newName) => {
-        set((state) => ({
-          fileSystem: state.fileSystem.map(item =>
-            item.id === id ? { ...item, name: newName, modifiedAt: new Date() } : item
-          ),
-        }));
-      },
-
-      updateFileContent: (id, content) => {
-        set((state) => ({
-          fileSystem: state.fileSystem.map(item =>
-            item.id === id ? { ...item, content, modifiedAt: new Date(), size: content.length } : item
-          ),
-        }));
-      },
-
-      getChildren: (parentId) => {
-        return get().fileSystem.filter(item => item.parentId === parentId);
-      },
-
-      createNote: () => {
-        const newNote: Note = {
-          id: `note-${Date.now()}`,
-          title: 'Untitled Note',
-          content: '',
-          isPinned: false,
-          createdAt: new Date(),
-          modifiedAt: new Date(),
-        };
-        set((state) => ({
-          notes: [...state.notes, newNote],
-        }));
-        return newNote;
-      },
-
-      updateNote: (id, updates) => {
-        set((state) => ({
-          notes: state.notes.map(note =>
-            note.id === id ? { ...note, ...updates, modifiedAt: new Date() } : note
-          ),
-        }));
-      },
-
-      deleteNote: (id) => {
-        set((state) => ({
-          notes: state.notes.filter(note => note.id !== id),
-        }));
-      },
-
-      togglePinNote: (id) => {
-        set((state) => ({
-          notes: state.notes.map(note =>
-            note.id === id ? { ...note, isPinned: !note.isPinned } : note
-          ),
-        }));
+      clearNotifications: () => {
+        set({ notifications: [] });
       },
 
       updateSettings: (newSettings) => {
@@ -358,24 +324,6 @@ export const useOSStore = create<OSState>()(
         }
       },
 
-      addNotification: (notification) => {
-        const newNotification: Notification = {
-          ...notification,
-          id: `notif-${Date.now()}`,
-          timestamp: new Date(),
-          read: false,
-        };
-        set((state) => ({
-          notifications: [newNotification, ...state.notifications].slice(0, 20),
-        }));
-      },
-
-      dismissNotification: (id) => {
-        set((state) => ({
-          notifications: state.notifications.filter(n => n.id !== id),
-        }));
-      },
-
       setStartMenuOpen: (open) => {
         set({ isStartMenuOpen: open, contextMenu: null });
       },
@@ -385,16 +333,26 @@ export const useOSStore = create<OSState>()(
       },
 
       finishBooting: () => {
-        set({ isBooting: false });
+        set({ isBooting: false, startTime: Date.now() });
+      },
+
+      getUptime: () => {
+        return Math.floor((Date.now() - get().startTime) / 1000);
+      },
+
+      getRunningApps: () => {
+        const apps: Record<string, number> = {};
+        get().windows.forEach(w => {
+          apps[w.appId] = (apps[w.appId] || 0) + 1;
+        });
+        return Object.entries(apps).map(([appId, count]) => ({ appId, count }));
       },
     }),
     {
-      name: 'webos-storage',
+      name: 'webos-state',
       partialize: (state) => ({
-        fileSystem: state.fileSystem,
-        notes: state.notes,
-        settings: state.settings,
         desktopIcons: state.desktopIcons,
+        settings: state.settings,
       }),
     }
   )
